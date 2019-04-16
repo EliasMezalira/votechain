@@ -1,0 +1,154 @@
+package br.org.votechain.client;
+
+
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+import org.hyperledger.fabric.sdk.Enrollment;
+import org.hyperledger.fabric_ca.sdk.HFCAClient;
+import org.hyperledger.fabric_ca.sdk.RegistrationRequest;
+
+import br.org.votechain.network.CarregadorPerfilConeccao;
+import br.org.votechain.participantes.Usuario;
+import br.org.votechain.utils.Util;
+
+/**
+ * Wrapper class for HFCAClient.class
+ *
+ * @author Vishal
+ */
+
+public class CAClientWrapper {
+
+	private HFCAClient hfcaClient;
+	private String org;
+
+	public CAClientWrapper(String org) {
+        this.org = org;
+        init();
+    }
+
+	/**
+     * Return UserContext for user from store /cred directory.
+     *
+     * @param userName
+     * @return UserContext, null if not found
+     * @throws Exception
+     */
+    public static Usuario getUserContext(String userName, String org) {
+    	Usuario userContext;
+        userContext = Util.readUserContext(org, userName);
+        if (userContext != null) {
+            return userContext;
+        }
+        Logger.getLogger(CAClientWrapper.class.getName()).log(Level.SEVERE, "Userconext not found in store for " + userName + ". Enroll the user.");
+        return userContext;
+
+    }
+
+	void init() {
+        try {
+            this.hfcaClient = HFCAClient.createNewInstance(CarregadorPerfilConeccao.getCaInfo(org));
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+	/**
+	 * Enroll the admin. This admin will be used as a registrar to register other
+	 * users.
+	 *
+	 * @param name   - admin name
+	 * @param secret - admin secret
+	 * @return adminContext
+	 * @throws Exception
+	 */
+
+	public void enrollAdmin(String name, String secret) throws Exception {
+		Usuario adminContext;
+		adminContext = Util.readUserContext(org, name);
+		if (adminContext != null) {
+			Logger.getLogger(CAClientWrapper.class.getName()).log(Level.WARNING,
+					"Admin is already enrolled. Therefore skipping...admin enrollment");
+			return;
+		}
+
+		Enrollment enrollment = hfcaClient.enroll(name, secret);
+		Logger.getLogger(CAClientWrapper.class.getName()).log(Level.INFO, "Admin enrolled.");
+
+		adminContext = new Usuario();
+		adminContext.setName(name);
+		adminContext.setEnrollment(enrollment);
+		adminContext.setAffiliation(CarregadorPerfilConeccao.getOrgInfo(org).getName());
+		adminContext.setMspId(CarregadorPerfilConeccao.getOrgInfo(org).getMspId());
+
+		Util.writeUserContext(adminContext);
+
+	}
+
+	/**
+	 * Register and enroll the user with organization MSP provider. User context
+	 * saved in /cred directory. This is an admin function; admin should be enrolled
+	 * before enrolling a user.
+	 *
+	 * @param userName
+	 * @param registrarAdmin - network admin
+	 * @return UserContext
+	 * @throws Exception
+	 */
+	public void registerUser(String userName, String registrarAdmin) throws Exception {
+		Usuario userContext;
+		userContext = Util.readUserContext(org, userName);
+		if (userContext != null) {
+			Logger.getLogger(CAClientWrapper.class.getName()).log(Level.WARNING,
+					"UserName - " + userName + "  is already registered. Therefore skipping..... registeration");
+			return;
+		}
+		RegistrationRequest regRequest = new RegistrationRequest(userName, org);
+		Usuario registrarContext = Util.readUserContext(org, registrarAdmin);
+		if (registrarContext == null) {
+			Logger.getLogger(CAClientWrapper.class.getName()).log(Level.SEVERE,
+					"Registrar " + registrarAdmin + " is not enrolled. Enroll Registrar.");
+			throw new Exception("registrar context not found");
+		}
+		String enrollSecret = hfcaClient.register(regRequest, registrarContext);
+
+		Enrollment enrollment = hfcaClient.enroll(userName, enrollSecret);
+
+		userContext = new Usuario();
+		userContext.setMspId(CarregadorPerfilConeccao.getOrgInfo(org).getMspId());
+		userContext.setAffiliation(org);
+		userContext.setEnrollment(enrollment);
+		userContext.setName(userName);
+
+		Util.writeUserContext(userContext);
+		Logger.getLogger(CAClientWrapper.class.getName()).log(Level.INFO, "UserName - " + userName
+				+ "  is successfully registered and enrolled by registrar -  " + registrarAdmin);
+
+	}
+
+	/**
+	 * Usercontext is generated from user secret key and store is also refreshed, *
+	 * User must be registered with MSP provider.
+	 *
+	 * @param userName
+	 * @param enrollSecret
+	 * @return UserContext
+	 * @throws Exception
+	 */
+	public Usuario getUserContext(String userName, String enrollSecret, String org) throws Exception {
+
+		Enrollment enrollment = hfcaClient.enroll(userName, enrollSecret);
+
+		Usuario userContext = new Usuario();
+		userContext.setMspId(CarregadorPerfilConeccao.getOrgInfo(org).getMspId());
+		userContext.setAffiliation(this.org);
+		userContext.setEnrollment(enrollment);
+		userContext.setName(userName);
+
+		Util.writeUserContext(userContext);
+		Logger.getLogger(CAClientWrapper.class.getName()).log(Level.INFO,
+				"UserName - " + userName + "  is successfully enrolled ");
+		return userContext;
+	}
+}
